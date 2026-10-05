@@ -1,4 +1,5 @@
 import SwiftUI
+import ApplicationServices
 
 struct SettingsView: View {
     @EnvironmentObject var state: AppState
@@ -486,6 +487,7 @@ struct GeneralView: View {
 
     var body: some View {
         Form {
+            AccessibilitySettingsSection()
             Section("Startup") {
                 Toggle("Launch Narrateify at login", isOn: $state.launchAtLogin)
                 Toggle("Auto-start last-used local model on launch",
@@ -758,6 +760,28 @@ private struct APIKeyEditor: View {
             Button("Remove key", role: .destructive) { store.remove() }
         } message: {
             Text("You will need to enter it again to use this cloud provider.")
+        }
+    }
+}
+
+private struct AccessibilitySettingsSection: View {
+    @State private var granted = AXIsProcessTrusted()
+
+    var body: some View {
+        Section("Accessibility") {
+            LabeledContent("Selected-text access", value: granted ? "Granted" : "Not granted to this build")
+            HStack {
+                Button("Open System Settings") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!)
+                }
+                Button("Check access") { granted = AXIsProcessTrusted() }
+            }
+            Text("If macOS shows Narrateify as enabled but access is missing here, remove its old entry, add /Applications/Narrateify.app again, and enable it. Clipboard and file narration work without this permission.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .onAppear { granted = AXIsProcessTrusted() }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            granted = AXIsProcessTrusted()
         }
     }
 }

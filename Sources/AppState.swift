@@ -343,7 +343,7 @@ final class AppState: ObservableObject {
             guard !trimmed.isEmpty else {
                 self.status = AXIsProcessTrusted()
                     ? "No text selected"
-                    : "Grant Accessibility access in System Settings"
+                    : "Accessibility is not granted to this build. Check Settings → General → Accessibility."
                 return
             }
             self.narrate(trimmed)

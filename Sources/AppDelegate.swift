@@ -1,5 +1,4 @@
 import AppKit
-import Carbon.HIToolbox
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
 
@@ -26,11 +25,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerHotKeys()
         TextCapture.trackSourceApplications()
 
-        // First launch: show the onboarding wizard (which handles the permission
-        // prompts). On later launches, just re-assert the Accessibility prompt.
-        if UserDefaults.standard.bool(forKey: OnboardingWindow.didOnboardKey) {
-            promptForAccessibilityIfNeeded()
-        } else {
+        // Onboarding offers permission controls, but launching the app must not
+        // request Accessibility. Only capturing a selection needs that access.
+        if !UserDefaults.standard.bool(forKey: OnboardingWindow.didOnboardKey) {
             Task { @MainActor in OnboardingWindow.showIfNeeded() }
         }
 
@@ -42,13 +39,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in await AppState.shared.updateChecker.check() }
     }
 
-    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        !SettingsWindowPresence.shared.reopen()
-    }
-
     func applicationWillTerminate(_ notification: Notification) {
         // Don't leave orphaned local-server processes behind.
         MainActor.assumeIsolated { AppState.shared.shutdownServers() }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        !SettingsWindowPresence.shared.reopen()
     }
 
     private func registerHotKeys() {
@@ -57,10 +54,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         MainActor.assumeIsolated { AppState.shared.shortcutStore.applyAll() }
     }
 
-    /// Triggers the system prompt to grant Accessibility access (needed to read
-    /// selected text by synthesizing ⌘C). Safe to call every launch.
-    private func promptForAccessibilityIfNeeded() {
-        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-        _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
-    }
 }

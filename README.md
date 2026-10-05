@@ -289,3 +289,7 @@ Use an existing localhost Chatterbox service without a second model installation
 ## Settings in the Dock
 
 Opening Settings makes Narrateify available in the Dock and Command-Tab until the window closes. Switching tabs or focus does not hide it; clicking the Dock icon brings Settings forward.
+
+## Permissions and API keys
+
+See [Accessibility troubleshooting](docs/accessibility.md), [selected-text capture](docs/selected-text.md), and [noninteractive Keychain storage](docs/api-key-storage.md). Opening the app does not request Accessibility or block on Keychain authorization.
