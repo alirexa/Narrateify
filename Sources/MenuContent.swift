@@ -26,24 +26,24 @@ struct MenuContent: View {
             Divider().padding(.vertical, 2)
 
             Button { state.narrateSelection() } label: {
-                Label("Narrate Selected Text", systemImage: "text.cursor")
+                MenuActionLabel("Narrate Selected Text", systemImage: "text.cursor",
+                                shortcut: state.shortcutStore.shortcut(for: .narrateSelection).display)
             }
-            .keyboardShortcut("r", modifiers: [.control, .option])
 
             Button { state.narrateScreenshot() } label: {
-                Label("Narrate Screenshot", systemImage: "camera.viewfinder")
+                MenuActionLabel("Narrate Screenshot", systemImage: "camera.viewfinder",
+                                shortcut: state.shortcutStore.shortcut(for: .narrateScreenshot).display)
             }
-            .keyboardShortcut("s", modifiers: [.control, .option])
 
             Button { state.narrateClipboard() } label: {
-                Label("Narrate Clipboard Text", systemImage: "doc.on.clipboard")
+                MenuActionLabel("Narrate Clipboard Text", systemImage: "doc.on.clipboard",
+                                shortcut: state.shortcutStore.shortcut(for: .narrateClipboard).display)
             }
-            .keyboardShortcut("v", modifiers: [.control, .option])
 
             Button { state.showQuickNarrate() } label: {
-                Label("Quick Narrate…", systemImage: "text.bubble")
+                MenuActionLabel("Quick Narrate…", systemImage: "text.bubble",
+                                shortcut: state.shortcutStore.shortcut(for: .quickNarrate).display)
             }
-            .keyboardShortcut("n", modifiers: [.control, .option])
 
             Button { state.readClipboardHighlighted() } label: {
                 Label("Read Clipboard (Highlighted)", systemImage: "text.line.first.and.arrowtriangle.forward")
@@ -60,9 +60,9 @@ struct MenuContent: View {
             SleepTimerMenu().environmentObject(state)
 
             Button { state.stop() } label: {
-                Label("Stop", systemImage: "stop.fill")
+                MenuActionLabel("Stop", systemImage: "stop.fill",
+                                shortcut: state.shortcutStore.shortcut(for: .stop).display)
             }
-            .keyboardShortcut("x", modifiers: [.control, .option])
             .disabled(!state.audio.hasAudio && !state.isSynthesizing)
 
             Divider().padding(.vertical, 2)
@@ -72,9 +72,11 @@ struct MenuContent: View {
             // activate alongside SettingsLink so it comes to the front. When the
             // window is already open, highlight the row and point back to it.
             SettingsLink {
-                Label(state.settingsWindowOpen ? "Settings (open)" : "Settings…",
-                      systemImage: state.settingsWindowOpen ? "gearshape.fill" : "gearshape")
+                MenuActionLabel(state.settingsWindowOpen ? "Settings (open)" : "Settings…",
+                                systemImage: state.settingsWindowOpen ? "gearshape.fill" : "gearshape",
+                                shortcut: "⌘,")
             }
+            .keyboardShortcut(",", modifiers: .command)
             .buttonStyle(MenuRowButtonStyle(highlighted: state.settingsWindowOpen))
             .simultaneousGesture(TapGesture().onEnded {
                 NSApp.activate(ignoringOtherApps: true)
@@ -84,14 +86,48 @@ struct MenuContent: View {
             Button(role: .destructive) {
                 NSApplication.shared.terminate(nil)
             } label: {
-                Label("Quit", systemImage: "power")
+                MenuActionLabel("Quit", systemImage: "power", shortcut: "⌘Q")
             }
             .buttonStyle(MenuRowButtonStyle(destructive: true))
             .keyboardShortcut("q")
         }
         .buttonStyle(MenuRowButtonStyle())
         .padding(12)
-        .frame(width: 250)
+        .frame(width: 340)
+    }
+}
+
+/// Window-style MenuBarExtra panels don't draw keyboard equivalents for us.
+/// Global actions use ShortcutStore's bindings; HotKeyManager handles activation
+/// so customized shortcuts don't leave additional hard-coded bindings behind.
+private struct MenuActionLabel: View {
+    let title: String
+    let systemImage: String
+    let shortcut: String
+
+    init(_ title: String, systemImage: String, shortcut: String) {
+        self.title = title
+        self.systemImage = systemImage
+        self.shortcut = shortcut
+    }
+
+    var body: some View {
+        HStack {
+            Label(title, systemImage: systemImage)
+            Spacer(minLength: 12)
+            MenuShortcutHint(shortcut: shortcut)
+        }
+    }
+}
+
+private struct MenuShortcutHint: View {
+    let shortcut: String
+
+    var body: some View {
+        Text(shortcut)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .fixedSize()
     }
 }
 
@@ -233,9 +269,13 @@ struct PlayerControls: View {
                     Image(systemName: "gobackward.5")
                 }
                 Button { state.audio.togglePlayPause() } label: {
-                    Image(systemName: state.audio.isPlaying ? "pause.fill" : "play.fill")
-                        .frame(width: 18)
+                    HStack(spacing: 6) {
+                        Image(systemName: state.audio.isPlaying ? "pause.fill" : "play.fill")
+                            .frame(width: 18)
+                        MenuShortcutHint(shortcut: state.shortcutStore.shortcut(for: .togglePlayback).display)
+                    }
                 }
+                .accessibilityLabel(state.audio.isPlaying ? "Pause" : "Play")
                 Button { state.audio.skip(by: 5) } label: {
                     Image(systemName: "goforward.5")
                 }

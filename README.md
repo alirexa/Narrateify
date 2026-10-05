@@ -30,7 +30,9 @@ running entirely **locally and free** on your Mac.
   | `⌃⌥Space` | Play / pause the current narration |
   | `⌃⌥X` | Stop playback |
 
-  All shortcuts are **customizable** in *Settings → General → Shortcuts*.
+  All global shortcuts are **customizable** in *Settings → General → Shortcuts*.
+  The menu displays each action's current shortcut beside it, including play/pause
+  during playback, plus **⌘,** for Settings and **⌘Q** for Quit.
 - **Five TTS engines**, switchable at any time:
   - **Apple (built-in)** — macOS's on-device voices; free, offline, no API key,
     nothing to install.
