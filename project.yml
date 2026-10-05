@@ -41,6 +41,9 @@ targets:
             NSSendTypes:
               - NSStringPboardType
               - public.utf8-plain-text
+    configFiles:
+      Debug: Config/Signing.xcconfig
+      Release: Config/Signing.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.narrateify.Narrateify
@@ -54,10 +57,7 @@ targets:
         # and launching /usr/sbin/screencapture).
         ENABLE_HARDENED_RUNTIME: true
         SWIFT_VERSION: "5.0"
-        # Allow ad-hoc local builds without a development team.
-        CODE_SIGN_STYLE: Manual
-        CODE_SIGN_IDENTITY: "-"
-        DEVELOPMENT_TEAM: ""
+        # Signing defaults and optional local overrides live in Config/Signing.xcconfig.
 
   NarrateifyTests:
     type: bundle.unit-test
@@ -67,6 +67,9 @@ targets:
       - path: Tests
     dependencies:
       - target: Narrateify
+    configFiles:
+      Debug: Config/Signing.xcconfig
+      Release: Config/Signing.xcconfig
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.narrateify.NarrateifyTests

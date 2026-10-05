@@ -293,3 +293,5 @@ Opening Settings makes Narrateify available in the Dock and Command-Tab until th
 ## Permissions and API keys
 
 See [Accessibility troubleshooting](docs/accessibility.md), [selected-text capture](docs/selected-text.md), and [noninteractive Keychain storage](docs/api-key-storage.md). Opening the app does not request Accessibility or block on Keychain authorization.
+
+For repeated local installations, configure a [stable signing identity](docs/signing.md) through the ignored local override. Default builds still work without a developer account.

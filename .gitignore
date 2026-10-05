@@ -33,3 +33,6 @@ dist/
 venv/
 *.pyc
 __pycache__/
+
+# Machine-specific signing identity (do not publish team/account settings)
+Config/Signing.local.xcconfig

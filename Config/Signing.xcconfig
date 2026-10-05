@@ -1,0 +1,7 @@
+// Portable defaults. App and test bundle must use the same signing identity.
+CODE_SIGN_STYLE = Manual
+CODE_SIGN_IDENTITY = -
+DEVELOPMENT_TEAM =
+
+// Keep machine-specific identities out of source control.
+#include? "Signing.local.xcconfig"

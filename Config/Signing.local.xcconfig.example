@@ -1,0 +1,4 @@
+// Copy to Signing.local.xcconfig (ignored by Git), then enter your own team.
+// Use the same identity across updates to retain the app's macOS trust identity.
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = YOUR_TEAM_ID
