@@ -15,9 +15,9 @@ final class AppState: ObservableObject {
     @Published var provider: TTSProviderKind {
         didSet { UserDefaults.standard.set(provider.rawValue, forKey: "ttsProvider") }
     }
-    @Published var apiKey: String {
-        didSet { Keychain.set(apiKey, account: "elevenLabsAPIKey") }
-    }
+    let elevenLabsCredentials = APIKeyStore(account: "elevenLabsAPIKey",
+        loadOnInit: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil)
+    var apiKey: String { elevenLabsCredentials.value }
     @Published var voiceId: String {
         didSet { UserDefaults.standard.set(voiceId, forKey: "elevenLabsVoiceId") }
     }
@@ -146,9 +146,9 @@ final class AppState: ObservableObject {
         didSet { UserDefaults.standard.set(compressAudio, forKey: "compressAudio") }
     }
     // OpenAI (cloud) settings.
-    @Published var openAIKey: String {
-        didSet { Keychain.set(openAIKey, account: "openAIKey") }
-    }
+    let openAICredentials = APIKeyStore(account: "openAIKey",
+        loadOnInit: ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil)
+    var openAIKey: String { openAICredentials.value }
     @Published var openAIVoice: String {
         didSet { UserDefaults.standard.set(openAIVoice, forKey: "openAIVoice") }
     }
@@ -195,14 +195,11 @@ final class AppState: ObservableObject {
     let updateChecker = UpdateChecker()
 
     private init() {
+        let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
         let d = UserDefaults.standard
         // New installs default to Apple's built-in engine — it works instantly
         // with no API key or download. Existing users keep their stored choice.
         provider = TTSProviderKind(rawValue: d.string(forKey: "ttsProvider") ?? "") ?? .appleTTS
-        // API keys live in the Keychain; transparently migrate any legacy
-        // plaintext value stored in UserDefaults by older builds.
-        apiKey  = Keychain.migratingValue(account: "elevenLabsAPIKey",
-                                          legacyDefaultsKey: "elevenLabsAPIKey")
         voiceId = d.string(forKey: "elevenLabsVoiceId") ?? "21m00Tcm4TlvDq8ikWAM" // "Rachel" demo voice
         modelId = d.string(forKey: "elevenLabsModelId") ?? "eleven_multilingual_v2"
         stability       = d.object(forKey: "elevenLabsStability") as? Double ?? 0.5
@@ -216,8 +213,6 @@ final class AppState: ObservableObject {
         launchAtLogin = (SMAppService.mainApp.status == .enabled)
         lastUsedProvider = (d.string(forKey: "lastUsedProvider"))
             .flatMap(TTSProviderKind.init(rawValue:))
-        openAIKey   = Keychain.migratingValue(account: "openAIKey",
-                                              legacyDefaultsKey: "openAIKey")
         openAIVoice = d.string(forKey: "openAIVoice") ?? "alloy"
         openAIModel = d.string(forKey: "openAIModel") ?? "gpt-4o-mini-tts"
         kokoroVoice = d.string(forKey: "kokoroVoice") ?? "af_heart"
@@ -242,6 +237,13 @@ final class AppState: ObservableObject {
         chatterboxLanguage = d.string(forKey: "chatterboxLanguage") ?? "en"
         chatterboxExaggeration = d.object(forKey: "chatterboxExaggeration") as? Double ?? 0.5
         chatterboxCfgWeight    = d.object(forKey: "chatterboxCfgWeight") as? Double ?? 0.5
+
+        for credentials in [elevenLabsCredentials, openAICredentials] {
+            credentials.objectWillChange
+                .receive(on: RunLoop.main)
+                .sink { [weak self] in self?.objectWillChange.send() }
+                .store(in: &cancellables)
+        }
 
         // Re-publish AppState when the audio controller's published state changes,
         // so the menu bar icon/status stay in sync — and keep the system
@@ -279,6 +281,9 @@ final class AppState: ObservableObject {
             .receive(on: RunLoop.main)
             .sink { [weak self] in self?.objectWillChange.send() }
             .store(in: &cancellables)
+
+        // Tests must not read the clipboard or register system media controls.
+        guard !isTesting else { return }
 
         // Begin watching the clipboard if the user left it enabled.
         if clipboardWatch { startClipboardWatch() }
@@ -638,12 +643,22 @@ final class AppState: ObservableObject {
         narrate(text)
     }
 
+    private func cloudKeyProblem(for engine: TTSProviderKind, translating: Bool = false) -> String? {
+        if (engine == .openAI || translating), openAIKey.isEmpty {
+            return "OpenAI: " + openAICredentials.unavailableMessage
+        }
+        if engine == .elevenLabs, apiKey.isEmpty {
+            return "ElevenLabs: " + elevenLabsCredentials.unavailableMessage
+        }
+        return nil
+    }
+
     // MARK: Voices
 
     func refreshVoices() {
         let key = apiKey
         guard !key.isEmpty else {
-            voicesStatus = "Enter your API key first."
+            voicesStatus = elevenLabsCredentials.unavailableMessage
             return
         }
         voicesStatus = "Loading voices…"
@@ -735,6 +750,10 @@ final class AppState: ObservableObject {
 
     func previewVoice() {
         guard !isPreviewing else { return }
+        if let problem = cloudKeyProblem(for: provider) {
+            status = problem
+            return
+        }
         let sample = Self.previewSample
         isPreviewing = true
         status = "Previewing voice…"
@@ -872,6 +891,10 @@ final class AppState: ObservableObject {
     }
 
     func narrate(_ text: String) {
+        if let problem = cloudKeyProblem(for: provider, translating: translateEnabled) {
+            status = problem
+            return
+        }
         // Remember the raw text so the clipboard watcher won't repeat it, then
         // clean it (markdown/URLs/abbreviations + pronunciation rules) before
         // synthesis. `spoken` is what we actually voice, save, and bill.

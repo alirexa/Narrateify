@@ -1,74 +1,89 @@
 import Foundation
 import Security
 
-/// Minimal wrapper around the macOS Keychain for storing secrets (API keys).
-/// Secrets live as generic-password items under the app's bundle identifier, so
-/// they're encrypted at rest and never written to `UserDefaults` or the repo.
+/// API keys stay in the original Keychain service. Background operations never
+/// display authentication UI; only explicit Settings actions may request it.
 enum Keychain {
     private static let service = Bundle.main.bundleIdentifier ?? "com.narrateify.Narrateify"
 
-    /// Stores (or clears, when `value` is empty) the secret for `account`.
-    static func set(_ value: String, account: String) {
-        guard !value.isEmpty else { delete(account: account); return }
-        let data = Data(value.utf8)
+    private static let interactionLock = NSRecursiveLock()
 
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        let attributes: [String: Any] = [
-            kSecValueData as String: data,
-            // Available after first unlock; not synced to iCloud.
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
-        ]
-
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-        if status == errSecItemNotFound {
-            var add = query
-            add.merge(attributes) { _, new in new }
-            SecItemAdd(add as CFDictionary, nil)
+    /// The original app uses the macOS login Keychain, whose older items can
+    /// ignore per-query UI flags. Suppress UI for the duration of a silent call,
+    /// serialize calls, and restore the previous process policy on every exit.
+    static func perform(allowInteraction: Bool, _ operation: () -> OSStatus) -> OSStatus {
+        interactionLock.lock()
+        defer { interactionLock.unlock() }
+        var previous: DarwinBoolean = false
+        guard SecKeychainGetUserInteractionAllowed(&previous) == errSecSuccess else {
+            return errSecInteractionNotAllowed
         }
+        guard SecKeychainSetUserInteractionAllowed(allowInteraction) == errSecSuccess else {
+            return errSecInteractionNotAllowed
+        }
+        defer { SecKeychainSetUserInteractionAllowed(previous.boolValue) }
+        return operation()
     }
 
-    /// Reads the secret for `account`, or `nil` if none is stored.
-    static func get(account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+    enum ReadResult: Equatable {
+        case value(String), missing, locked, failure(OSStatus)
+    }
+
+    static func query(account: String, allowInteraction: Bool = false) -> [String: Any] {
+        [kSecClass as String: kSecClassGenericPassword,
+         kSecAttrService as String: service,
+         kSecAttrAccount as String: account,
+         kSecUseAuthenticationUI as String: allowInteraction ? kSecUseAuthenticationUIAllow : kSecUseAuthenticationUIFail]
+    }
+
+    static func read(account: String, allowInteraction: Bool = false) -> ReadResult {
+        var request = query(account: account, allowInteraction: allowInteraction)
+        request[kSecReturnData as String] = true
+        request[kSecMatchLimit as String] = kSecMatchLimitOne
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data,
-              let value = String(data: data, encoding: .utf8)
-        else { return nil }
-        return value
-    }
-
-    static func delete(account: String) {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-        ]
-        SecItemDelete(query as CFDictionary)
-    }
-
-    /// Returns the Keychain value for `account`, transparently migrating a
-    /// legacy plaintext `UserDefaults` value into the Keychain (and deleting the
-    /// plaintext copy) the first time it runs. Existing users keep their key
-    /// without re-entering it; the cleartext copy is removed.
-    static func migratingValue(account: String, legacyDefaultsKey: String) -> String {
-        if let secret = get(account: account) { return secret }
-        let defaults = UserDefaults.standard
-        if let legacy = defaults.string(forKey: legacyDefaultsKey), !legacy.isEmpty {
-            set(legacy, account: account)
-            defaults.removeObject(forKey: legacyDefaultsKey)
-            return legacy
+        let status = perform(allowInteraction: allowInteraction) {
+            SecItemCopyMatching(request as CFDictionary, &item)
         }
-        return ""
+        return decode(status: status, data: item as? Data)
+    }
+
+    static func decode(status: OSStatus, data: Data?) -> ReadResult {
+        switch status {
+        case errSecSuccess:
+            guard let data, let value = String(data: data, encoding: .utf8), !value.isEmpty else {
+                return .failure(errSecDecode)
+            }
+            return .value(value)
+        case errSecItemNotFound: return .missing
+        case errSecInteractionNotAllowed, errSecAuthFailed, errSecUserCanceled: return .locked
+        default: return .failure(status)
+        }
+    }
+
+    static func get(account: String) -> String? {
+        if case .value(let value) = read(account: account) { return value }
+        return nil
+    }
+
+    @discardableResult
+    static func set(_ value: String, account: String, allowInteraction: Bool = false) -> OSStatus {
+        guard !value.isEmpty else { return delete(account: account, allowInteraction: allowInteraction) }
+        let request = query(account: account, allowInteraction: allowInteraction)
+        let attributes: [String: Any] = [
+            kSecValueData as String: Data(value.utf8),
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock
+        ]
+        return perform(allowInteraction: allowInteraction) {
+            let status = SecItemUpdate(request as CFDictionary, attributes as CFDictionary)
+            guard status == errSecItemNotFound else { return status }
+            return SecItemAdd(request.merging(attributes) { _, new in new } as CFDictionary, nil)
+        }
+    }
+
+    @discardableResult
+    static func delete(account: String, allowInteraction: Bool = false) -> OSStatus {
+        perform(allowInteraction: allowInteraction) {
+            SecItemDelete(query(account: account, allowInteraction: allowInteraction) as CFDictionary)
+        }
     }
 }

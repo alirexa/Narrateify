@@ -157,7 +157,7 @@ struct ModelsView: View {
 
     private var elevenLabsSection: some View {
         Section("ElevenLabs") {
-            SecureField("API Key", text: $state.apiKey)
+            APIKeyEditor(store: state.elevenLabsCredentials)
 
             // Pick from fetched voices once loaded; otherwise enter an ID.
             if state.voices.isEmpty {
@@ -198,7 +198,7 @@ struct ModelsView: View {
 
     private var openAISection: some View {
         Section("OpenAI") {
-            SecureField("API Key", text: $state.openAIKey)
+            APIKeyEditor(store: state.openAICredentials)
 
             Picker("Voice", selection: $state.openAIVoice) {
                 ForEach(OpenAIClient.voices, id: \.self) { Text($0.capitalized).tag($0) }
@@ -692,3 +692,35 @@ struct PronunciationEditor: View {
 }
 
 // History lives in HistoryView.swift.
+
+
+/// Keep editing separate from storage: typing never opens a password dialog.
+private struct APIKeyEditor: View {
+    @ObservedObject var store: APIKeyStore
+    @State private var draft = ""
+    @State private var confirmRemoval = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                SecureField(store.mayHaveSavedKey ? "Replace API key" : "API key", text: $draft)
+                Button("Save") { if store.save(draft) { draft = "" } }
+                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            Text(store.message).font(.caption).foregroundStyle(.secondary)
+            HStack {
+                if store.needsUnlock {
+                    Button("Unlock saved key") { store.unlock() }
+                }
+                if store.mayHaveSavedKey {
+                    Button("Remove key", role: .destructive) { confirmRemoval = true }
+                }
+            }
+        }
+        .confirmationDialog("Remove this saved API key?", isPresented: $confirmRemoval) {
+            Button("Remove key", role: .destructive) { store.remove() }
+        } message: {
+            Text("You will need to enter it again to use this cloud provider.")
+        }
+    }
+}
