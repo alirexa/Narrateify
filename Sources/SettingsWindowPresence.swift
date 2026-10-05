@@ -26,6 +26,7 @@ final class SettingsWindowPresence: NSObject {
         isOpen = true
         AppState.shared.settingsWindowOpen = true
         NSApp.setActivationPolicy(.regular)
+        ApplicationIcon.apply()
         NSApp.activate(ignoringOtherApps: true)
     }
 

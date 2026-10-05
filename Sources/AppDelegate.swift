@@ -15,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Run as a background "agent" — no Dock icon, no app menu.
         // (Setting LSUIElement = YES in Info.plist does the same at launch;
         //  this is a belt-and-suspenders fallback.)
+        ApplicationIcon.apply()
         NSApp.setActivationPolicy(.accessory)
 
         // Make the "Narrate with Narrateify" Service available in the
