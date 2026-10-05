@@ -13,13 +13,13 @@ struct SettingsView: View {
                 .tabItem { Label("History", systemImage: "clock") }
         }
         .frame(width: 540, height: 540)
+        .background(SettingsWindowRegistration())
         .onAppear {
             // Keep the "On disk" figures current whenever Settings opens.
             state.kokoro.refreshDiskUsage()
             state.chatterbox.refreshDiskUsage()
-            state.settingsWindowOpen = true
+            SettingsWindowPresence.shared.showInDock()
         }
-        .onDisappear { state.settingsWindowOpen = false }
     }
 }
 

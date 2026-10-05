@@ -40,6 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in await AppState.shared.updateChecker.check() }
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        !SettingsWindowPresence.shared.reopen()
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // Don't leave orphaned local-server processes behind.
         MainActor.assumeIsolated { AppState.shared.shutdownServers() }

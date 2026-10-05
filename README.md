@@ -5,7 +5,7 @@ Disclaimer: I vibe-coded this app because I needed it. Feel free to use & change
 > A macOS menu-bar app that narrates any text on demand — selected text, a
 > screen region (via OCR), or the clipboard — with a global hotkey.
 
-Narrateify lives in your menu bar (no Dock icon) and speaks text using the TTS
+Narrateify lives in your menu bar (with a Dock icon while Settings is open) and speaks text using the TTS
 engine of your choice: macOS's **built-in Apple voices** (zero setup),
 **ElevenLabs** or **OpenAI** in the cloud, or **Kokoro** and **Chatterbox**
 running entirely **locally and free** on your Mac.
@@ -285,3 +285,7 @@ Connect to an existing local Kokoro-FastAPI server and follow narration with wor
 ## Shared Chatterbox
 
 Use an existing localhost Chatterbox service without a second model installation. See [connection requirements](docs/shared-chatterbox.md).
+
+## Settings in the Dock
+
+Opening Settings makes Narrateify available in the Dock and Command-Tab until the window closes. Switching tabs or focus does not hide it; clicking the Dock icon brings Settings forward.
