@@ -24,6 +24,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSUpdateDynamicServices()
 
         registerHotKeys()
+        TextCapture.trackSourceApplications()
 
         // First launch: show the onboarding wizard (which handles the permission
         // prompts). On later launches, just re-assert the Accessibility prompt.
