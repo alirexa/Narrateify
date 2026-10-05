@@ -190,7 +190,12 @@ struct KokoroClient: TTSProvider {
     /// Fetches the server's voice list (falls back to a built-in list elsewhere).
     static func fetchVoices(baseURL: URL) async throws -> [String] {
         let url = baseURL.appendingPathComponent("v1/audio/voices")
-        let (data, _) = try await URLSession.shared.data(from: url)
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw KokoroError.notRunning
+        }
         struct VoicesResponse: Codable { let voices: [String] }
         return try JSONDecoder().decode(VoicesResponse.self, from: data).voices
     }

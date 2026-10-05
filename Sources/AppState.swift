@@ -168,6 +168,7 @@ final class AppState: ObservableObject {
     }
 
     // MARK: Runtime state
+    private var narrationTask: Task<Void, Never>?
     @Published var status: String = "Ready"
     /// True while audio is being synthesized (drives the overlay's first phase).
     @Published private(set) var isSynthesizing = false
@@ -381,6 +382,9 @@ final class AppState: ObservableObject {
     }
 
     func stop() {
+        narrationTask?.cancel()
+        isSynthesizing = false
+        SynthesisOverlay.shared.hide()
         audio.stop()
         queue.removeAll()
         status = "Stopped"
@@ -513,11 +517,16 @@ final class AppState: ObservableObject {
         }
     }
 
-    /// Opens the live reader (word-by-word highlighting) for the given text,
-    /// always using Apple's on-device engine since only it emits word ranges.
+    /// Reads with server word timings when available, otherwise Apple live speech.
     func readAloudHighlighted(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { status = "No text to read"; return }
+        if provider == .kokoro, kokoro.useExistingServer {
+            kokoro.highlightPlayback = true
+            narrate(trimmed)
+            return
+        }
+        stop()
         let voice = appleVoice.isEmpty ? AppleTTSClient.defaultVoiceIdentifier() : appleVoice
         ReaderWindow.shared.show(text: trimmed, voiceIdentifier: voice, speed: speed)
     }
@@ -779,12 +788,16 @@ final class AppState: ObservableObject {
                                               model: openAIModel, speed: speed)
                     data = try await client.synthesize(text: sample)
                 case .kokoro:
-                    guard kokoro.status == .running else {
+                    guard kokoro.useExistingServer ? kokoro.externalBaseURL != nil : kokoro.status == .running else {
                         status = "Start the Kokoro server to preview."
                         isPreviewing = false; return
                     }
                     let client = KokoroClient(baseURL: kokoro.baseURL, voice: kokoroVoice, speed: speed)
-                    data = try await client.synthesize(text: sample)
+                    if kokoro.useExistingServer {
+                        data = try await client.synthesizeCaptioned(text: sample).audio
+                    } else {
+                        data = try await client.synthesize(text: sample)
+                    }
                 case .chatterbox:
                     guard chatterbox.status == .running else {
                         status = "Start the Chatterbox server to preview."
@@ -810,7 +823,13 @@ final class AppState: ObservableObject {
 
     /// Re-play a previously saved narration from history.
     func play(_ record: NarrationRecord) {
+        narrationTask?.cancel()
+        isSynthesizing = false
         audio.load(url: history.fileURL(for: record))
+        if let timings = record.wordTimings, !timings.isEmpty {
+            audio.setTranscript(record.text, timings: timings)
+            PlaybackReaderWindow.shared.show(audio: audio)
+        }
         status = "Playing"
         startNowPlaying(record.preview.isEmpty ? "Narration" : record.preview)
     }
@@ -829,7 +848,7 @@ final class AppState: ObservableObject {
 
     /// The overlay's "end" control: stop playback and dismiss the overlay.
     func endNarration() {
-        audio.stop()
+        stop()
         status = "Stopped"
         NowPlayingController.shared.clear()
         SynthesisOverlay.shared.hide()
@@ -844,9 +863,12 @@ final class AppState: ObservableObject {
     /// On launch: if the last narration used a local model that's installed,
     /// start its server so it's ready without the user opening Settings.
     func autoStartLastServerIfNeeded() {
+        if kokoro.useExistingServer {
+            Task { await kokoro.connect(); refreshKokoroVoices() }
+        }
         guard autoStartLocalServer else { return }
         switch lastUsedProvider {
-        case .kokoro     where kokoro.isInstalled:     kokoro.start()
+        case .kokoro     where kokoro.isInstalled && !kokoro.useExistingServer:     kokoro.start()
         case .chatterbox where chatterbox.isInstalled: chatterbox.start()
         default: break
         }
@@ -955,7 +977,7 @@ final class AppState: ObservableObject {
                  * OpenAIClient.pricePerThousand(model: openAIModel)
             fileExtension = "mp3"
         case .kokoro:
-            guard kokoro.status == .running else {
+            guard kokoro.useExistingServer ? kokoro.externalBaseURL != nil : kokoro.status == .running else {
                 status = "Start the Kokoro server in Settings → Models."
                 return
             }
@@ -983,6 +1005,12 @@ final class AppState: ObservableObject {
             fileExtension = "wav"
         }
 
+        let captionClient = engine == .kokoro && kokoro.useExistingServer
+            ? KokoroClient(baseURL: kokoro.baseURL, voice: voiceId, speed: speed) : nil
+        let showHighlights = captionClient != nil && kokoro.highlightPlayback
+        narrationTask?.cancel()
+        ReaderController.shared.stop()
+
         // Remember what we actually used, so we can auto-start it next launch.
         lastUsedProvider = engine
 
@@ -994,7 +1022,7 @@ final class AppState: ObservableObject {
         isSynthesizing = true
         if overlayEnabled { SynthesisOverlay.shared.show() }
 
-        Task {
+        narrationTask = Task {
             do {
                 // Optionally translate into the target language before synthesis.
                 // Done here (async) so the UI stays responsive; the text was
@@ -1005,7 +1033,11 @@ final class AppState: ObservableObject {
                     let translator = Translator(apiKey: self.openAIKey, target: self.translateLanguage)
                     spokenText = try await translator.translate(spoken)
                 }
+                try Task.checkCancellation()
                 let workChunks = TextChunker.chunk(spokenText)
+                // The chunker normalizes newlines for long text. Display exactly
+                // the synthesized text so UTF-16 offsets remain consistent.
+                if captionClient != nil { spokenText = workChunks.joined() }
                 guard !workChunks.isEmpty else {
                     self.isSynthesizing = false
                     SynthesisOverlay.shared.hide()
@@ -1031,13 +1063,16 @@ final class AppState: ObservableObject {
                 }
 
                 // Stream only when it helps: opted in and more than one chunk.
-                let streaming = self.streamPlayback && workChunks.count > 1
+                let streaming = self.streamPlayback && workChunks.count > 1 && captionClient == nil
                 let title = String(spokenText.prefix(80))
 
                 // Collect each chunk's bytes so we can join them into one valid
                 // file. WAV chunks can't be naively concatenated (each carries its
                 // own header), so `AudioJoiner` PCM-merges them.
                 var parts: [Data] = []
+                var wordTimings: [SpeechTiming] = []
+                var textOffset = 0
+                var timeOffset = 0.0
 
                 if streaming {
                     // Start playing chunk 1 as soon as it's ready, enqueuing the
@@ -1060,11 +1095,25 @@ final class AppState: ObservableObject {
                     // Synthesize every chunk so the player can scrub/seek across
                     // the whole narration once joined.
                     for chunk in workChunks {
-                        parts.append(try await self.synthesize(client, text: chunk))
+                        if let captionClient {
+                            let result = try await captionClient.synthesizeCaptioned(text: chunk)
+                            try Task.checkCancellation()
+                            parts.append(result.audio)
+                            wordTimings += SpeechTimeline.map(result.timestamps, text: chunk,
+                                duration: result.duration, textOffset: textOffset, timeOffset: timeOffset)
+                            textOffset += (chunk as NSString).length
+                            timeOffset += result.duration
+                        } else {
+                            parts.append(try await self.synthesize(client, text: chunk))
+                            try Task.checkCancellation()
+                        }
                     }
                 }
 
-                let combined = AudioJoiner.join(parts, fileExtension: fileExtension)
+                try Task.checkCancellation()
+                let combined = captionClient != nil
+                    ? try AudioJoiner.mergeWAV(parts)
+                    : AudioJoiner.join(parts, fileExtension: fileExtension)
 
                 // gpt-4o-mini-tts bills by audio (not characters), so estimate it
                 // from the finished duration now that we have it. Character-billed
@@ -1084,6 +1133,7 @@ final class AppState: ObservableObject {
                     storedExtension = "m4a"
                 }
 
+                try Task.checkCancellation()
                 let record = try self.history.save(audio: audioData,
                                                    text: spokenText,
                                                    engine: engine.engineName,
@@ -1092,11 +1142,16 @@ final class AppState: ObservableObject {
                                                    modelId: modelId,
                                                    credits: billedCredits,
                                                    estimatedCost: finalCost,
-                                                   fileExtension: storedExtension)
+                                                   fileExtension: storedExtension,
+                                                   wordTimings: wordTimings.isEmpty ? nil : wordTimings)
                 self.history.prune(maxItems: self.historyLimit)
                 if !streaming {
                     self.isSynthesizing = false
                     self.audio.load(url: self.history.fileURL(for: record))
+                    if !wordTimings.isEmpty {
+                        self.audio.setTranscript(spokenText, timings: wordTimings)
+                        if showHighlights { PlaybackReaderWindow.shared.show(audio: self.audio) }
+                    }
                     self.status = "Playing"
                     self.startNowPlaying(record.preview.isEmpty ? "Narration" : record.preview)
                 }
@@ -1105,6 +1160,7 @@ final class AppState: ObservableObject {
                     SynthesisOverlay.shared.hide()
                 }
             } catch {
+                guard !Task.isCancelled else { return }
                 self.isSynthesizing = false
                 self.status = error.localizedDescription
                 SynthesisOverlay.shared.hide()

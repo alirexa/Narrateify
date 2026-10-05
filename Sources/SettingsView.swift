@@ -228,73 +228,91 @@ struct ModelsView: View {
 
     private var kokoroSection: some View {
         Section("Kokoro (local)") {
+            Toggle("Use existing Kokoro server", isOn: Binding(
+                get: { state.kokoro.useExistingServer },
+                set: { state.kokoro.useExistingServer = $0 }
+            ))
+            if state.kokoro.useExistingServer {
+                TextField("Server URL", text: Binding(
+                    get: { state.kokoro.externalURL },
+                    set: { state.kokoro.externalURL = $0 }
+                ))
+                Text("Reuse Kokoro from OpenReader or another local Docker container.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             HStack {
                 Text("Status")
                 Spacer()
-                Text(kokoroStatusText)
-                    .foregroundStyle(kokoroStatusColor)
+                Text(kokoroStatusText).foregroundStyle(kokoroStatusColor)
             }
-
             Picker("Voice", selection: $state.kokoroVoice) {
                 ForEach(state.kokoroVoices, id: \.self) { Text($0).tag($0) }
             }
-
-            HStack(spacing: 10) {
-                switch state.kokoro.status {
-                case .notInstalled:
-                    Button("Install Kokoro") { state.kokoro.install() }
-                case .installing:
-                    ProgressView().controlSize(.small)
-                    Text("Installing…").foregroundStyle(.secondary)
-                case .stopped, .failed:
-                    Button("Start Server") { state.kokoro.start() }
-                    if case .failed = state.kokoro.status {
-                        Button("Reinstall") { state.kokoro.install() }
+            if state.kokoro.useExistingServer {
+                Button("Test Connection & Refresh Voices") {
+                    Task {
+                        await state.kokoro.connect()
+                        if state.kokoro.status == .running { state.refreshKokoroVoices() }
                     }
-                case .starting:
-                    ProgressView().controlSize(.small)
-                    Text("Starting… (first run downloads the model)")
-                        .foregroundStyle(.secondary)
-                    Button("Stop") { state.kokoro.stop() }   // terminate mid-startup
-                case .running:
-                    Button("Stop Server") { state.kokoro.stop() }
-                    Button("Refresh Voices") { state.refreshKokoroVoices() }
-                }
-                Spacer()
-            }
-
-            Text("\(KokoroServer.performanceNote) Free & offline.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-
-            if state.kokoro.status == .notInstalled {
-                LabeledContent("Download size", value: KokoroServer.estimatedDownload)
-                Text("Creates a Python venv under ~/.narrateify/kokoro; all weights "
-                     + "stay there so nothing else on your system is touched.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                }.disabled(state.kokoro.status == .starting)
+                Toggle("Open reader with highlighting", isOn: Binding(
+                    get: { state.kokoro.highlightPlayback },
+                    set: { state.kokoro.highlightPlayback = $0 }
+                ))
+                Text("Word and sentence highlighting uses Kokoro-FastAPI caption timings. "
+                     + "Audio is prepared before playback so you can seek through the full narration.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Text("Keep Docker and your Kokoro container running. Narrateify only connects to it; no extra model download is needed.")
+                    .font(.caption).foregroundStyle(.secondary)
             } else {
-                LabeledContent("On disk", value: state.kokoro.diskUsage > 0
-                               ? LocalServerSupport.formatBytes(state.kokoro.diskUsage)
-                               : "calculating…")
-                Button("Uninstall Kokoro", role: .destructive) {
-                    state.kokoro.uninstall()
-                }
+                managedKokoroControls
             }
-
-            if !state.kokoro.log.isEmpty {
-                DisclosureGroup("Log") {
-                    ScrollView {
-                        Text(state.kokoro.log)
-                            .font(.system(.caption2, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                    .frame(height: 120)
-                }
-            }
-
             infoLink(.kokoro, "About Kokoro")
+        }
+    }
+
+    @ViewBuilder
+    private var managedKokoroControls: some View {
+        HStack(spacing: 10) {
+            switch state.kokoro.status {
+            case .notInstalled:
+                Button("Install Kokoro") { state.kokoro.install() }
+            case .installing:
+                ProgressView().controlSize(.small)
+                Text("Installing…").foregroundStyle(.secondary)
+            case .stopped, .failed:
+                Button("Start Server") { state.kokoro.start() }
+                if case .failed = state.kokoro.status {
+                    Button("Reinstall") { state.kokoro.install() }
+                }
+            case .starting:
+                ProgressView().controlSize(.small)
+                Text("Starting…").foregroundStyle(.secondary)
+                Button("Stop") { state.kokoro.stop() }
+            case .running:
+                Button("Stop Server") { state.kokoro.stop() }
+                Button("Refresh Voices") { state.refreshKokoroVoices() }
+            }
+            Spacer()
+        }
+        Text("\(KokoroServer.performanceNote) Free & offline.")
+            .font(.caption).foregroundStyle(.secondary)
+        if state.kokoro.status == .notInstalled {
+            LabeledContent("Download size", value: KokoroServer.estimatedDownload)
+            Text("Creates a Python venv under ~/.narrateify/kokoro; all weights stay there.")
+                .font(.caption).foregroundStyle(.secondary)
+        } else {
+            LabeledContent("On disk", value: state.kokoro.diskUsage > 0
+                ? LocalServerSupport.formatBytes(state.kokoro.diskUsage) : "calculating…")
+            Button("Uninstall Kokoro", role: .destructive) { state.kokoro.uninstall() }
+        }
+        if !state.kokoro.log.isEmpty {
+            DisclosureGroup("Log") {
+                ScrollView {
+                    Text(state.kokoro.log).font(.system(.caption2, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                }.frame(height: 120)
+            }
         }
     }
 
@@ -302,9 +320,9 @@ struct ModelsView: View {
         switch state.kokoro.status {
         case .notInstalled: return "Not installed"
         case .installing:   return "Installing…"
-        case .stopped:      return "Installed · stopped"
-        case .starting:     return "Starting…"
-        case .running:      return "Running"
+        case .stopped:      return state.kokoro.useExistingServer ? "Not connected" : "Installed · stopped"
+        case .starting:     return state.kokoro.useExistingServer ? "Connecting…" : "Starting…"
+        case .running:      return state.kokoro.useExistingServer ? "Connected" : "Running"
         case .failed(let m): return "Error: \(m)"
         }
     }

@@ -16,6 +16,7 @@ struct NarrationRecord: Codable, Identifiable, Hashable {
     let voiceName: String
     let modelId: String
     var engine: String?          // e.g. "ElevenLabs" or "Kokoro (local)"
+    var wordTimings: [SpeechTiming]? = nil
     var groupId: UUID?           // which group it's filed under (nil = ungrouped)
 
     /// Short single-line preview for list rows.
@@ -186,7 +187,8 @@ final class NarrationHistory: ObservableObject {
               modelId: String,
               credits: Double,
               estimatedCost: Double,
-              fileExtension: String) throws -> NarrationRecord {
+              fileExtension: String,
+              wordTimings: [SpeechTiming]? = nil) throws -> NarrationRecord {
         let id = UUID()
         let fileName = "\(id.uuidString).\(fileExtension)"
         let url = directory.appendingPathComponent(fileName)
@@ -206,7 +208,8 @@ final class NarrationHistory: ObservableObject {
             voiceId: voiceId,
             voiceName: voiceName,
             modelId: modelId,
-            engine: engine
+            engine: engine,
+            wordTimings: wordTimings
         )
         records.insert(record, at: 0)
         persist()

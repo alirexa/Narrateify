@@ -23,6 +23,16 @@ final class AudioController: NSObject, ObservableObject, AVAudioPlayerDelegate {
     /// streamed narration). Used to advance the reading queue.
     var onFinished: (() -> Void)?
 
+    @Published private(set) var narrationText = ""
+    @Published private(set) var wordTimings: [SpeechTiming] = []
+    @Published private(set) var readerSentences: [ReaderSentence] = []
+
+    func setTranscript(_ text: String, timings: [SpeechTiming]) {
+        narrationText = text
+        wordTimings = timings
+        readerSentences = ReaderSentence.split(text)
+    }
+
     private var player: AVAudioPlayer?
     private var ticker: Timer?
 
@@ -97,6 +107,9 @@ final class AudioController: NSObject, ObservableObject, AVAudioPlayerDelegate {
     }
 
     func stop() {
+        narrationText = ""
+        wordTimings = []
+        readerSentences = []
         if streaming { teardownQueue() }
         player?.stop()
         player = nil
@@ -257,7 +270,7 @@ final class AudioController: NSObject, ObservableObject, AVAudioPlayerDelegate {
         // @Published value there triggers "Publishing changes from within view
         // updates." Defer the write to a clean main-queue turn (and skip no-ops)
         // so the publish never lands mid-update.
-        let t = Timer(timeInterval: 0.2, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 0.05, repeats: true) { [weak self] _ in
             guard let self, let player = self.player else { return }
             let time = player.currentTime
             DispatchQueue.main.async {

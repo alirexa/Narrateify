@@ -18,6 +18,9 @@ struct MenuContent: View {
             if state.audio.hasAudio {
                 Divider().padding(.vertical, 2)
                 PlayerControls().environmentObject(state)
+                if !state.audio.wordTimings.isEmpty {
+                    Button("Open Reader") { PlaybackReaderWindow.shared.show(audio: state.audio) }
+                }
             }
 
             Divider().padding(.vertical, 2)
@@ -60,7 +63,7 @@ struct MenuContent: View {
                 Label("Stop", systemImage: "stop.fill")
             }
             .keyboardShortcut("x", modifiers: [.control, .option])
-            .disabled(!state.audio.hasAudio)
+            .disabled(!state.audio.hasAudio && !state.isSynthesizing)
 
             Divider().padding(.vertical, 2)
 

@@ -33,8 +33,60 @@ final class KokoroServer: ObservableObject {
         "Fast & lightweight (82M params). Runs smoothly on CPU; near-instant on "
         + "Apple silicon. Great default for quick, low-cost narration."
 
+    @Published var useExistingServer = UserDefaults.standard.bool(forKey: "kokoroUseExistingServer") {
+        didSet {
+            UserDefaults.standard.set(useExistingServer, forKey: "kokoroUseExistingServer")
+            connectionID = UUID()
+            process?.terminate()
+            process = nil
+            status = useExistingServer || isInstalled ? .stopped : .notInstalled
+        }
+    }
+    @Published var externalURL = UserDefaults.standard.string(forKey: "kokoroExternalURL") ?? "http://127.0.0.1:8880" {
+        didSet {
+            UserDefaults.standard.set(externalURL, forKey: "kokoroExternalURL")
+            connectionID = UUID()
+            if useExistingServer { status = .stopped }
+        }
+    }
+    @Published var highlightPlayback = UserDefaults.standard.object(forKey: "kokoroHighlightPlayback") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(highlightPlayback, forKey: "kokoroHighlightPlayback") }
+    }
+    private var connectionID = UUID()
     let port = 8765
-    var baseURL: URL { URL(string: "http://127.0.0.1:\(port)")! }
+    var externalBaseURL: URL? {
+        Self.localURL(externalURL)
+    }
+    static func localURL(_ value: String) -> URL? {
+        guard let url = URL(string: value.trimmingCharacters(in: .whitespacesAndNewlines)),
+              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+              ["127.0.0.1", "localhost", "[::1]", "::1"].contains(url.host?.lowercased() ?? ""),
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil else { return nil }
+        return url
+    }
+    var baseURL: URL {
+        useExistingServer ? (externalBaseURL ?? URL(string: "http://127.0.0.1:8880")!)
+            : URL(string: "http://127.0.0.1:\(port)")!
+    }
+
+    func connect() async {
+        guard useExistingServer else { return }
+        guard let url = externalBaseURL else {
+            status = .failed("Enter a localhost URL, for example http://127.0.0.1:8880")
+            return
+        }
+        let id = UUID()
+        connectionID = id
+        status = .starting
+        do {
+            let voices = try await KokoroClient.fetchVoices(baseURL: url)
+            guard id == connectionID, useExistingServer else { return }
+            status = voices.isEmpty ? .failed("The server returned no voices.") : .running
+        } catch {
+            guard id == connectionID, useExistingServer else { return }
+            status = .failed("Cannot connect. Start the Kokoro container in Docker and try again.")
+        }
+    }
 
     private let baseDir: URL
     private var venvPython: URL { baseDir.appendingPathComponent("venv/bin/python3") }
@@ -46,7 +98,7 @@ final class KokoroServer: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser
         baseDir = home.appendingPathComponent(".narrateify/kokoro", isDirectory: true)
         try? FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
-        status = FileManager.default.fileExists(atPath: baseDir.appendingPathComponent(".installed").path)
+        status = UserDefaults.standard.bool(forKey: "kokoroUseExistingServer") || FileManager.default.fileExists(atPath: baseDir.appendingPathComponent(".installed").path)
             ? .stopped : .notInstalled
     }
 
@@ -59,7 +111,7 @@ final class KokoroServer: ObservableObject {
     /// Creates the venv and pip-installs Kokoro. Downloads PyTorch + model
     /// weights, so this can take several minutes on first run.
     func install() {
-        guard status != .installing else { return }
+        guard !useExistingServer, status != .installing else { return }
         status = .installing
         log = ""
         appendLog("Installing Kokoro… this downloads PyTorch and can take a few minutes.\n")
@@ -108,6 +160,7 @@ final class KokoroServer: ObservableObject {
     // MARK: Start / stop
 
     func start() {
+        if useExistingServer { Task { await connect() }; return }
         guard isInstalled else { fail("Kokoro isn't installed yet."); return }
         guard process == nil else { return }
         status = .starting
@@ -143,7 +196,7 @@ final class KokoroServer: ObservableObject {
         p.terminationHandler = { [weak self] _ in
             Task { @MainActor in
                 self?.process = nil
-                self?.status = .stopped
+                if self?.useExistingServer == false { self?.status = .stopped }
                 self?.appendLog("Kokoro server stopped.\n")
             }
         }
@@ -158,6 +211,7 @@ final class KokoroServer: ObservableObject {
     }
 
     func stop() {
+        guard !useExistingServer else { return }
         process?.terminate()
         process = nil
         status = .stopped
@@ -168,6 +222,7 @@ final class KokoroServer: ObservableObject {
     /// Stops the server and deletes the venv + downloaded weights, reclaiming
     /// all disk space. Returns the model to the "not installed" state.
     func uninstall() {
+        guard !useExistingServer else { return }
         stop()
         LocalServerSupport.killProcesses(onPort: port)
         try? FileManager.default.removeItem(at: baseDir)

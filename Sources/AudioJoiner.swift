@@ -28,7 +28,7 @@ enum AudioJoiner {
     /// All chunks come from the same engine/voice/settings, so they share a
     /// format; if a later chunk's format differs we throw and the caller falls
     /// back to raw concatenation.
-    private static func mergeWAV(_ chunks: [Data]) throws -> Data {
+    static func mergeWAV(_ chunks: [Data]) throws -> Data {
         let tmp = FileManager.default.temporaryDirectory
             .appendingPathComponent("Narrateify-Join-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
@@ -45,18 +45,24 @@ enum AudioJoiner {
         // Mirror the format-preserving writer pattern used in AppleTTS.swift.
         let fmt = first.processingFormat
         let outURL = tmp.appendingPathComponent("out.wav")
-        let out = try AVAudioFile(forWriting: outURL,
-                                  settings: fmt.settings,
-                                  commonFormat: fmt.commonFormat,
-                                  interleaved: fmt.isInterleaved)
-        for f in inputs {
-            guard f.processingFormat == fmt else { throw JoinError.formatMismatch }
-            let frames = AVAudioFrameCount(f.length)
-            guard frames > 0,
-                  let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: frames) else { continue }
-            try f.read(into: buf)
-            try out.write(from: buf)
-        }
+        try autoreleasepool {
+            let out = try AVAudioFile(forWriting: outURL,
+                                      settings: fmt.settings,
+                                      commonFormat: fmt.commonFormat,
+                                      interleaved: fmt.isInterleaved)
+            for f in inputs {
+                guard f.processingFormat == fmt else { throw JoinError.formatMismatch }
+                guard let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 8192) else {
+                    throw JoinError.empty
+                }
+                while f.framePosition < f.length {
+                    try f.read(into: buf)
+                    guard buf.frameLength > 0 else { break }
+                    try out.write(from: buf)
+                }
+            }
+            if #available(macOS 15, *) { out.close() }
+        } // release the writer and finalize the header on macOS 14 as well
         return try Data(contentsOf: outURL)
     }
 }
