@@ -35,8 +35,54 @@ final class ChatterboxServer: ObservableObject {
         + "slower on CPU and uses several GB of RAM. Higher quality, expressive, "
         + "and multilingual (23 languages)."
 
+    @Published var useExistingServer = UserDefaults.standard.bool(forKey: "chatterboxUseExistingServer") {
+        didSet {
+            UserDefaults.standard.set(useExistingServer, forKey: "chatterboxUseExistingServer")
+            connectionID = UUID()
+            process?.terminate()
+            process = nil
+            status = useExistingServer || isInstalled ? .stopped : .notInstalled
+        }
+    }
+    @Published var externalURL = UserDefaults.standard.string(forKey: "chatterboxExternalURL") ?? "http://127.0.0.1:8766" {
+        didSet {
+            UserDefaults.standard.set(externalURL, forKey: "chatterboxExternalURL")
+            connectionID = UUID()
+            if useExistingServer { status = .stopped }
+        }
+    }
+    private var connectionID = UUID()
     let port = 8766
-    var baseURL: URL { URL(string: "http://127.0.0.1:\(port)")! }
+    var externalBaseURL: URL? { KokoroServer.localURL(externalURL) }
+    var baseURL: URL {
+        useExistingServer ? (externalBaseURL ?? URL(string: "http://127.0.0.1:8766")!)
+            : URL(string: "http://127.0.0.1:\(port)")!
+    }
+
+    func connect() async {
+        guard useExistingServer else { return }
+        guard let url = externalBaseURL else {
+            status = .failed("Enter a localhost URL, for example http://127.0.0.1:8766")
+            return
+        }
+        let id = UUID()
+        connectionID = id
+        status = .starting
+        do {
+            var request = URLRequest(url: url.appendingPathComponent("health"))
+            request.timeoutInterval = 10
+            let (_, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                throw URLError(.badServerResponse)
+            }
+            let voices = try await ChatterboxClient.fetchVoices(baseURL: url)
+            guard id == connectionID, useExistingServer else { return }
+            status = voices.isEmpty ? .failed("The server returned no languages.") : .running
+        } catch {
+            guard id == connectionID, useExistingServer else { return }
+            status = .failed("Cannot connect. Check the shared Chatterbox service and try again.")
+        }
+    }
 
     private let baseDir: URL
     private var venvPython: URL { baseDir.appendingPathComponent("venv/bin/python3") }
@@ -48,7 +94,7 @@ final class ChatterboxServer: ObservableObject {
         let home = FileManager.default.homeDirectoryForCurrentUser
         baseDir = home.appendingPathComponent(".narrateify/chatterbox", isDirectory: true)
         try? FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
-        status = FileManager.default.fileExists(atPath: baseDir.appendingPathComponent(".installed").path)
+        status = UserDefaults.standard.bool(forKey: "chatterboxUseExistingServer") || FileManager.default.fileExists(atPath: baseDir.appendingPathComponent(".installed").path)
             ? .stopped : .notInstalled
     }
 
@@ -61,7 +107,7 @@ final class ChatterboxServer: ObservableObject {
     /// Creates the venv and pip-installs `chatterbox-tts`. Downloads PyTorch +
     /// model weights (several GB), so this can take a while on first run.
     func install() {
-        guard status != .installing else { return }
+        guard !useExistingServer, status != .installing else { return }
         status = .installing
         log = ""
         appendLog("Installing Chatterbox… this downloads PyTorch + model weights and can take several minutes.\n")
@@ -111,6 +157,7 @@ final class ChatterboxServer: ObservableObject {
     // MARK: Start / stop
 
     func start() {
+        if useExistingServer { Task { await connect() }; return }
         guard isInstalled else { fail("Chatterbox isn't installed yet."); return }
         guard process == nil else { return }
         status = .starting
@@ -169,6 +216,7 @@ final class ChatterboxServer: ObservableObject {
     }
 
     func stop() {
+        connectionID = UUID()
         process?.terminate()
         process = nil
         status = .stopped
@@ -179,6 +227,7 @@ final class ChatterboxServer: ObservableObject {
     /// Stops the server and deletes the venv + downloaded weights, reclaiming
     /// all disk space. Returns the model to the "not installed" state.
     func uninstall() {
+        guard !useExistingServer else { return }
         stop()
         LocalServerSupport.killProcesses(onPort: port)
         try? FileManager.default.removeItem(at: baseDir)

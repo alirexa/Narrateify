@@ -281,3 +281,7 @@ compares the running version against the latest release tag, so the tag
 ## Shared Kokoro and playback reader
 
 Connect to an existing local Kokoro-FastAPI server and follow narration with word or sentence highlighting. The reader supports seeking, speed, auto-scroll and saved appearance controls. See [setup and limitations](docs/shared-kokoro.md).
+
+## Shared Chatterbox
+
+Use an existing localhost Chatterbox service without a second model installation. See [connection requirements](docs/shared-chatterbox.md).

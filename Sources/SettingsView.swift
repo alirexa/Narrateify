@@ -340,19 +340,52 @@ struct ModelsView: View {
 
     private var chatterboxSection: some View {
         Section("Chatterbox (local)") {
+            Toggle("Use existing Chatterbox server", isOn: Binding(
+                get: { state.chatterbox.useExistingServer },
+                set: { state.chatterbox.useExistingServer = $0 }
+            ))
+            if state.chatterbox.useExistingServer {
+                TextField("Server URL", text: Binding(
+                    get: { state.chatterbox.externalURL },
+                    set: { state.chatterbox.externalURL = $0 }
+                ))
+            }
             HStack {
                 Text("Status")
                 Spacer()
-                Text(chatterboxStatusText)
-                    .foregroundStyle(chatterboxStatusColor)
+                Text(chatterboxStatusText).foregroundStyle(chatterboxStatusColor)
             }
-
             Picker("Language", selection: $state.chatterboxLanguage) {
                 ForEach(state.chatterboxVoices, id: \.self) { code in
                     Text(ChatterboxClient.languageName(code)).tag(code)
                 }
             }
+            if state.chatterbox.useExistingServer {
+                Button("Test Connection & Refresh Languages") {
+                    Task {
+                        await state.chatterbox.connect()
+                        if state.chatterbox.status == .running { state.refreshChatterboxVoices() }
+                    }
+                }.disabled(state.chatterbox.status == .starting)
+                Text("Share the local server with OpenMaus. Its model loads on demand; the first request after an idle period takes longer.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                managedChatterboxControls
+            }
+            if !state.chatterbox.log.isEmpty {
+                DisclosureGroup("Log") {
+                    ScrollView {
+                        Text(state.chatterbox.log).font(.system(.caption2, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                    }.frame(height: 120)
+                }
+            }
+            infoLink(.chatterbox, "About Chatterbox")
+        }
+    }
 
+    @ViewBuilder
+    private var managedChatterboxControls: some View {
             HStack(spacing: 10) {
                 switch state.chatterbox.status {
                 case .notInstalled:
@@ -396,20 +429,6 @@ struct ModelsView: View {
                 }
             }
 
-            if !state.chatterbox.log.isEmpty {
-                DisclosureGroup("Log") {
-                    ScrollView {
-                        Text(state.chatterbox.log)
-                            .font(.system(.caption2, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                    .frame(height: 120)
-                }
-            }
-
-            infoLink(.chatterbox, "About Chatterbox")
-        }
     }
 
     /// A footer link to a provider's information page, shown at the bottom of
@@ -429,9 +448,9 @@ struct ModelsView: View {
         switch state.chatterbox.status {
         case .notInstalled: return "Not installed"
         case .installing:   return "Installing…"
-        case .stopped:      return "Installed · stopped"
-        case .starting:     return "Starting…"
-        case .running:      return "Running"
+        case .stopped:      return state.chatterbox.useExistingServer ? "Not connected" : "Installed · stopped"
+        case .starting:     return state.chatterbox.useExistingServer ? "Connecting…" : "Starting…"
+        case .running:      return state.chatterbox.useExistingServer ? "Connected" : "Running"
         case .failed(let m): return "Error: \(m)"
         }
     }

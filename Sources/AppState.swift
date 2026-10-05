@@ -799,7 +799,7 @@ final class AppState: ObservableObject {
                         data = try await client.synthesize(text: sample)
                     }
                 case .chatterbox:
-                    guard chatterbox.status == .running else {
+                    guard chatterbox.useExistingServer ? chatterbox.externalBaseURL != nil : chatterbox.status == .running else {
                         status = "Start the Chatterbox server to preview."
                         isPreviewing = false; return
                     }
@@ -866,10 +866,13 @@ final class AppState: ObservableObject {
         if kokoro.useExistingServer {
             Task { await kokoro.connect(); refreshKokoroVoices() }
         }
+        if chatterbox.useExistingServer {
+            Task { await chatterbox.connect(); refreshChatterboxVoices() }
+        }
         guard autoStartLocalServer else { return }
         switch lastUsedProvider {
         case .kokoro     where kokoro.isInstalled && !kokoro.useExistingServer:     kokoro.start()
-        case .chatterbox where chatterbox.isInstalled: chatterbox.start()
+        case .chatterbox where chatterbox.isInstalled && !chatterbox.useExistingServer: chatterbox.start()
         default: break
         }
     }
@@ -989,7 +992,7 @@ final class AppState: ObservableObject {
             cost = 0
             fileExtension = "wav"
         case .chatterbox:
-            guard chatterbox.status == .running else {
+            guard chatterbox.useExistingServer ? chatterbox.externalBaseURL != nil : chatterbox.status == .running else {
                 status = "Start the Chatterbox server in Settings → Models."
                 return
             }
